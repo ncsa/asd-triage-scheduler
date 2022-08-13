@@ -7,17 +7,19 @@ Create events on the shared outlook calendar from CSV input
 d_username=andylytical
 d_image=asd-triage-scheduler
 d_tag=main
+
 docker run --rm -it --pull always \
   --mount type=bind,src=$HOME,dst=/home \
   -e NETRC=/home/.ssh/netrc \
-  -e PYEXCH_OAUTH_CONFIG='/home/.ssh/exchange_oauth.yaml' \
-  -e PYEXCH_TOKEN_FILE='/home/.ssh/exchange_token' \
+  -e OAUTH_CONFIG_FILE='/home/.ssh/exchange_oauth.yaml' \
+  -e OAUTH_TOKEN_FILE='/home/.ssh/exchange_token' \
+  -e TRIAGE_LOCATION='https://illinois.zoom.us/j/....' \
   ${d_username}/${d_image}:${d_tag}
 ```
 
 ## Inside Docker container
-* Copy rows from [Ticket Triage Duty Planner](https://docs.google.com/spreadsheets/d/1AwVikVzHB_vQhgJDqYxeVkVVNgeNhGsvWTV5L9mxcGg) ("Daily Assignments" tab)
-* `echo 'CSV-TAB-DELIMITED-CONTENT' | ./run.sh`
+* Copy rows from [Ticket Triage Duty Planner](https://docs.google.com/spreadsheets/d/1AwVikVzHB_vQhgJDqYxeVkVVNgeNhGsvWTV5L9mxcGg) into a file
+* `./run.sh -f csvfile`
 
 # OAUTH Supporting files
 ## oauth config file
