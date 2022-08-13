@@ -1,0 +1,7 @@
+exchangelib
+oauthlib
+python-dateutil
+pyyaml
+tzlocal
+#git+https://github.com/andylytical/pyexch@v3.0.0
+git+https://github.com/andylytical/pyexch@token_expiration
