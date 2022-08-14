@@ -6,6 +6,7 @@ import csv
 import datetime
 import dateutil.parser
 import logging
+import os
 import pathlib
 import pprint
 import pyexch.pyexch
@@ -58,12 +59,7 @@ def get_pyexch():
 
 def get_triage_location():
     if 'triage_location' not in resources:
-        location = None
-        args = get_args()
-        try:
-            location = args.location
-        except AttributeError as e:
-            location = os.getenv( 'TRIAGE_LOCATION', None )
+        location = os.getenv( 'TRIAGE_LOCATION', get_args().location )
         if not location:
             raise UserWarning( 'Missing Triage Location. Use --location or TRIAGE_LOCATION' )
         resources['triage_location'] = location
