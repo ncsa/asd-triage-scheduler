@@ -20,33 +20,62 @@ def get_args():
             'formatter_class': argparse.RawDescriptionHelpFormatter,
             'description': 'triage duty scheduler',
             'epilog': '''
-    ENVIRONMENT VARIABLES:
-    TRIAGE_LOCATION: Zoom link to use for the location in exchange calendar event.
+ENVIRONMENT VARIABLES:
+    TRIAGE_CSVFILE: File containing tab separated data from spreadsheet
+    TRIAGE_LOCATIONFILE: File with meeting location for exchange calendar event
     OAUTH_CONFIG_FILE: (see https://github.com/andylytical/pyexch)
     OAUTH_TOKEN_FILE: (see https://github.com/andylytical/pyexch)
     NETRC: (see https://github.com/andylytical/pyexch)
     PYEXCH_REGEX_JSON: (see https://github.com/andylytical/pyexch)
-    '''
+            '''
         }
-        parser = argparse.ArgumentParser()
+        parser = argparse.ArgumentParser( **constructor_args )
         parser.add_argument( '-d', '--debug', action='store_true' )
-        parser.add_argument( '-f', '--csvfile' )
-        parser.add_argument( '-l', '--location',
-            help='Zoom link to use for the location in exchange calendar event.' )
-        defaults = {
-            'debug': False,
-            'csvfile': 'csv',
-        }
-        parser.set_defaults( **defaults )
+        parser.add_argument( '-n', '--dryrun', action='store_true',
+            help='Show what would be done but make no changes.')
+
+        parser.add_argument( '--mktriage', action='store_true',
+            help='Make Triage duty events from CSV file. Requires TRIAGE_CSVFILE or --csvfile')
+        parser.add_argument( '--mkhandoff', action='store_true',
+            help='Make triage handoff events using actual triage events in the next 90 days.')
+
+        parser.add_argument( '-f', '--csvfile',
+            help='Override TRIAGE_CSVFILE environment variable.' )
+        parser.add_argument( '-l', '--locationfile',
+            help='Override TRIAGE_LOCATIONFILE environment variable.' )
+
+        mkhandoff_group = parser.add_argument_group( 'Make Handoff',
+            'Optionally specify start, end dates for making handoff meetings.' )
+        mkhandoff_group.add_argument( '--start', help='Start date for --mkhandoff (default: today).' ) 
+        mkhandoff_group.add_argument( '--end', help='End date for --mkhandoff (default: start + 90 days).' )
+        # defaults = {
+        #     'start': datetime.date.today(),
+        #     'end': datetime.date.today() + datetime.timedelta( days=90 ),
+        # }
+        # parser.set_defaults( **defaults )
         args = parser.parse_args()
         resources['args'] = args
+
+        # set sane default for start
+        if args.start:
+            new_start = dateutil.parser.parse( args.start )
+            args.start = new_start
+        else:
+            args.start = datetime.date.today()
+
+        # set sane default for end
+        if args.end:
+            new_end = dateutil.parser.parse( args.end )
+            args.end = new_end
+        else:
+            args.end = args.start + datetime.timedelta( days=90 )
     return resources['args']
 
 
 def get_regex_map():
     return {
         "TRIAGE":"^Triage: ",
-        "SHIFTCHANGE":"^Triage Shift Change: ",
+        "HANDOFF":"^Triage Hand-Off",
         }
 
 
@@ -57,11 +86,24 @@ def get_pyexch():
     return resources['pyexch']
 
 
+def get_csvfile():
+    if 'csvfile' not in resources:
+        csvfile = os.getenv( 'TRIAGE_CSVFILE', get_args().csvfile )
+        if not csvfile:
+            raise UserWarning( 'Missing csvfile. Use --csvfile or TRIAGE_CSVFILE' )
+        resources['csvfile'] = csvfile
+    return resources['csvfile']
+
+
 def get_triage_location():
     if 'triage_location' not in resources:
-        location = os.getenv( 'TRIAGE_LOCATION', get_args().location )
-        if not location:
-            raise UserWarning( 'Missing Triage Location. Use --location or TRIAGE_LOCATION' )
+        l_file = os.getenv( 'TRIAGE_LOCATIONFILE', get_args().locationfile )
+        if not l_file:
+            raise UserWarning( 'Missing location file. Use --locationfile or TRIAGE_LOCATIONFILE' )
+        p = pathlib.Path( l_file )
+        location = p.read_text()
+        if len(location) < 1:
+            raise UserWarning( f"Unable to read location from file '{l_file}'" )
         resources['triage_location'] = location
     return resources['triage_location']
 
@@ -72,9 +114,47 @@ def get_triage_categories():
     return resources['triage_categories']
 
 
+def get_existing_events( start=None, end=None ):
+    ''' Get existing events between "start" and "end"
+        start = datetime.date
+        end = datetime.date
+    '''
+    logging.debug( pprint.pformat( [ start, end ] ) )
+    px = get_pyexch()
+    # ensure end is 11:59:59 PM
+    existing_events = px.get_events_filtered(
+        start = datetime.datetime( start.year, start.month, start.day ),
+        end = datetime.datetime( end.year, end.month, end.day, hour=11, minute=59, second=59 ),
+    )
+    # logging.debug( f'Existing events: { [ (e.start, e.type, e.subject) for e in existing_events ] }' )
+    for e in existing_events:
+        logging.debug( f'{e.start} {e.type} {e.subject}' )
+    # create hash of event dates & types
+    current_events = {}
+    for e in existing_events:
+        dt = e.start.date()
+        if dt not in current_events:
+            current_events[dt] = {}
+        current_events[dt][e.type] = e
+    return current_events
+
+
+def validate_user_input():
+    ''' Check that all user input is present and valid
+    '''
+    location = get_triage_location() #will fail if location is not provided
+    logging.debug( f"Triage Location: '{location}'" )
+
+    args = get_args()
+    if args.mktriage:
+        csvfile = get_csvfile() #will fail if csvfile is not provided
+        logging.debug( f"CSV file: '{csvfile}'" )
+    if args.mkhandoff:
+        logging.debug( f"MKHANDOFF" )
+
+
 def parse_csv_input():
-    args= get_args()
-    p = pathlib.Path( args.csvfile )
+    p = pathlib.Path( get_csvfile() )
     with p.open() as f:
         csv_data = csv.reader( f, dialect='excel-tab' )
         triage_raw_data = {}
@@ -103,6 +183,7 @@ def create_triage_meetings( mtg_data ):
     '''
     # get existing events
     triage_start_date = min( mtg_data.keys() )
+    # add one work day to end_date for benefit of handoff events
     triage_end_date = max( mtg_data.keys() )
     existing_events = get_existing_events(
         start = triage_start_date,
@@ -123,67 +204,127 @@ def create_triage_meetings( mtg_data ):
         )
 
 
-def get_existing_events( start, end ):
-    ''' px = PyExch instance, already logged in
-        start = datetime.date OR datetime.datetime
-        end = datetime.date OR datetime.datetime
-        Get existing events between "start" and "end"
-    '''
-    logging.debug( pprint.pformat( [ start, end ] ) )
-    px = get_pyexch()
-    # convert end to a datetime at the end of the day 11:59:59 PM
-    existing_events = px.get_events_filtered(
-        start = start,
-        end = end + datetime.timedelta( seconds=86399 ),
-    )
-    # pprint.pprint( existing_events )
-    logging.debug( f'Existing events: { [ (e.start, e.type, e.subject) for e in existing_events ] }' )
-    # create hash of event dates & types
-    current_events = {}
-    for e in existing_events:
-        dt = e.start.date()
-        if dt not in current_events:
-            current_events[dt] = {}
-        current_events[dt][e.type] = e
-    return current_events
-
-
-def create_or_update_triage_event( date, emails, members, existing_event:None):
+def create_or_update_triage_event( date, emails, members, existing_event=None ):
     ''' date = datetime for new event
-        attendees = list of email addresses
+        emails = list of email addresses
+        members = list of names (used in the event title)
         existing_event = raw exchange event
     '''
     if existing_event:
-        #logging.info( f'Existing TRIAGE event {pprint.pprint(ev)}' )
-        logging.info( f'Existing TRIAGE event for date "{date}"' )
-        logging.debug( f'Existing Event: {existing_event}' )
+        logging.info( f'Found existing TRIAGE event for date "{date}"' )
+        #logging.debug( f'Existing Event: {existing_event}' )
     else:
+        subj = f"Triage: {', '.join(members)}"
         px = get_pyexch()
         logging.info( f'Making new TRIAGE event for date "{date}"' )
-        px.new_all_day_event( 
-            date = date, 
-            subject = f"Triage: {', '.join(members)}",
-            attendees = emails,
-            location = get_triage_location(),
-            categories = get_triage_categories(),
-            free = True
-        )
+        args = get_args()
+        if args.dryrun:
+            logging.info( f'DRYRUN: Subj:"{subj}" Attendees:"{emails}"' )
+        else:
+            px.new_all_day_event( 
+                date = date, 
+                subject = subj,
+                attendees = emails,
+                location = get_triage_location(),
+                categories = get_triage_categories(),
+                free = True
+            )
+
+
+def create_handoff_meetings():
+    args = get_args()
+
+    # Get all existing TRIAGE & HANDOFF events from Exchange calendar
+    existing_events = get_existing_events(
+        start = args.start,
+        end = args.end
+    )
+    # for edate, types in existing_events.items():
+    #     for etype, event in types.items():
+    #         logging.debug( f'{event.start} {event.type} {event.subject}' )
+
+    # For each day there is a TRIAGE event,
+    #   get the required_attendees from both this and the next TRIAGE event
+    #   Required_attendees=[ Attendee(), ...]
+    #     where Attendee( mailbox=Mailbox(), ...)
+    #     and where Mailbox( email_address='...', ...)
+    #     thus, emails=[ a.mailbox.email_address for a in required_attendees ]
+    triage_dates = sorted( existing_events.keys() )
+    loop_end = len( triage_dates ) - 1
+    for i in range( loop_end ):
+        # get members from current triage event
+        curr_date = triage_dates[i]
+        curr_triage_event = existing_events[ curr_date ][ 'TRIAGE' ]
+        curr_members = [ a.mailbox.email_address for a in curr_triage_event.raw_event.required_attendees ]
+        logging.debug( f'{curr_triage_event.start} {curr_triage_event.subject}, {curr_members}' )
+        # get members from next triage event
+        try:
+            next_date = triage_dates[i+1]
+        except KeyError:
+            logging.error( f'Next date not found, after curr_date: "{curr_date}"' )
+            raise
+        try:
+            next_triage_event = existing_events[ next_date ][ 'TRIAGE' ]
+            next_members = [ a.mailbox.email_address for a in next_triage_event.raw_event.required_attendees ]
+        except KeyError:
+            logging.error( f'No event data found after date: "{curr_date}"' )
+            raise
+        handoff_date = next_date
+        handoff_members = curr_members + next_members
+        logging.debug( f'Collected handoff data: {handoff_date} {handoff_members}' )
+        # get existing handoff event, if it exists
+        try:
+            handoff_event = existing_events[ handoff_date ][ 'HANDOFF' ]
+        except KeyError:
+            handoff_event = None
+        create_or_update_handoff_event( handoff_date, handoff_members, handoff_event )
+
+
+def create_or_update_handoff_event( date, emails, existing_event=None ):
+    ''' date = date of the event
+        emails = list of email addresses
+        existing_event = raw exchange event
+    '''
+    if existing_event:
+        logging.info( f'Found existing HANDOFF event for date "{date}"' )
+        #logging.debug( f'Existing Event: {existing_event}' )
+        existing_members = sorted( [ a.mailbox.email_address for a in existing_event.raw_event.required_attendees ] )
+        new_members = sorted( emails )
+        if existing_members != new_members:
+            logging.error( f'Member mismatch for HANDOFF date "{date}"' )
+            logging.error( f'Existing: "{existing_members}"' )
+            logging.error( f'New:      "{new_members}"' )
+            raise SystemExit()
+    else:
+        subj = 'Triage Hand-Off'
+        ev_start = datetime.datetime.combine( date,  datetime.time( hour=8, minute=45 ) )
+        ev_end = datetime.datetime.combine( date, datetime.time( hour=9, minute=00 ) )
+        logging.info( f'Making new HANDOFF event for date "{date}"' )
+        args = get_args()
+        if args.dryrun:
+            logging.info( f'DRYRUN: Start:"{ev_start}" End:"{ev_end}" Subj:"{subj}" Attendees:"{emails}"' )
+        else:
+            px = get_pyexch()
+            px.new_event( 
+                start = ev_start,
+                end = ev_end,
+                subject = subj,
+                attendees = emails,
+                location = get_triage_location(),
+                categories = get_triage_categories()
+            )
 
 
 def run():
-    triage_raw_data = parse_csv_input()
+    validate_user_input()
 
-#    authenticate()
+    if args.mktriage:
+        logging.info( f"Attempting to make triage meetings from CSV data" )
+        triage_raw_data = parse_csv_input()
+        create_triage_meetings( triage_raw_data )
 
-    # (1) create all triage meetings
-    create_triage_meetings( triage_raw_data )
-
-    # (2) create / update SHIFTCHANGE events
-    # Get all existing TRIAGE events
-    # Extract attendees required_attendees=[ Attendee(), ...]
-    #   where Attendee( mailbox=Mailbox(), ...)
-    #   and where Mailbox( email_address='...', ...)
-    #   thus, emails=[ a.mailbox.email_address for a in required_attendees ]
+    if args.mkhandoff:
+        create_handoff_meetings()
 
 
 if __name__ == '__main__':
@@ -196,8 +337,9 @@ if __name__ == '__main__':
     logging.basicConfig( level=log_lvl, format=fmt )
     no_debug = [
         'exchangelib',
+        'urllib3',
+        'requests_oauthlib',
     ]
     for key in no_debug:
         logging.getLogger(key).setLevel(logging.CRITICAL)
     run()
-

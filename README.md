@@ -13,7 +13,7 @@ docker run --rm -it --pull always \
   -e NETRC=/home/.ssh/netrc \
   -e OAUTH_CONFIG_FILE='/home/.ssh/exchange_oauth.yaml' \
   -e OAUTH_TOKEN_FILE='/home/.ssh/exchange_token' \
-  -e TRIAGE_LOCATION='https://illinois.zoom.us/j/....' \
+  -e TRIAGE_LOCATIONFILE='/home/asd_triage_location' \
   ${d_username}/${d_image}:${d_tag}
 ```
 
