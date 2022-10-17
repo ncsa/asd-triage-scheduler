@@ -6,7 +6,7 @@ Create events on the shared outlook calendar from CSV input
 ```
 d_username=andylytical
 d_image=asd-triage-scheduler
-d_tag=main
+d_tag=v1.2.0
 
 docker run --rm -it --pull always \
   --mount type=bind,src=$HOME,dst=/home \
@@ -14,6 +14,7 @@ docker run --rm -it --pull always \
   -e OAUTH_CONFIG_FILE='/home/.ssh/exchange_oauth.yaml' \
   -e OAUTH_TOKEN_FILE='/home/.ssh/exchange_token' \
   -e TRIAGE_LOCATIONFILE='/home/asd_triage_location' \
+  -e TRIAGE_CSVFILE='/home/asd_triage_schedule' \
   ${d_username}/${d_image}:${d_tag}
 ```
 
