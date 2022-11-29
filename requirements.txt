@@ -3,4 +3,4 @@ oauthlib
 python-dateutil
 pyyaml
 tzlocal
-git+https://github.com/andylytical/pyexch@v3.1.0
+git+https://github.com/andylytical/pyexch@v3.3.0

@@ -1,26 +1,14 @@
 # asd-triage-scheduler
 Create events on the shared outlook calendar from CSV input
 
+
 # Quick start
-## Linux
-```
-d_username=andylytical
-d_image=asd-triage-scheduler
-d_tag=v1.2.0
+1. Copy rows from [Ticket Triage Duty Planner](https://docs.google.com/spreadsheets/d/1AwVikVzHB_vQhgJDqYxeVkVVNgeNhGsvWTV5L9mxcGg) into file `~/asd-triage-schedule`
+1. `git clone https://github.com/ncsa/asd-triage-scheduler`
+1. `bash asd-triage-scheduler/go.sh`
+1. `./run.sh --mktriage`
+1. `./run.sh --mkhandoff`
 
-docker run --rm -it --pull always \
-  --mount type=bind,src=$HOME,dst=/home \
-  -e NETRC=/home/.ssh/netrc \
-  -e OAUTH_CONFIG_FILE='/home/.ssh/exchange_oauth.yaml' \
-  -e OAUTH_TOKEN_FILE='/home/.ssh/exchange_token' \
-  -e TRIAGE_LOCATIONFILE='/home/asd_triage_location' \
-  -e TRIAGE_CSVFILE='/home/asd_triage_schedule' \
-  ${d_username}/${d_image}:${d_tag}
-```
-
-## Inside Docker container
-* Copy rows from [Ticket Triage Duty Planner](https://docs.google.com/spreadsheets/d/1AwVikVzHB_vQhgJDqYxeVkVVNgeNhGsvWTV5L9mxcGg) into a file
-* `./run.sh -f csvfile`
 
 # OAUTH Supporting files
 ## oauth config file

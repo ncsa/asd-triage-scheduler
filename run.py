@@ -49,8 +49,6 @@ ENVIRONMENT VARIABLES:
         mkhandoff_group.add_argument( '--start', help='Start date for --mkhandoff (default: today).' ) 
         mkhandoff_group.add_argument( '--end', help='End date for --mkhandoff (default: start + 90 days).' )
         # defaults = {
-        #     'start': datetime.date.today(),
-        #     'end': datetime.date.today() + datetime.timedelta( days=90 ),
         # }
         # parser.set_defaults( **defaults )
         args = parser.parse_args()
@@ -291,10 +289,12 @@ def create_or_update_handoff_event( date, emails, existing_event=None ):
         existing_members = sorted( [ a.mailbox.email_address for a in existing_event.raw_event.required_attendees ] )
         new_members = sorted( emails )
         if existing_members != new_members:
-            logging.error( f'Member mismatch for HANDOFF date "{date}"' )
-            logging.error( f'Existing: "{existing_members}"' )
-            logging.error( f'New:      "{new_members}"' )
-            raise SystemExit()
+            logging.debug( f'Member mismatch for HANDOFF date "{date}"' )
+            logging.debug( f'Existing: "{existing_members}"' )
+            logging.debug( f'New:      "{new_members}"' )
+            px = get_pyexch()
+            px.update_event( existing_event.raw_event, attendees=new_members )
+            logging.info( f'Updated member list for HANDOFF date "{date}"' )
     else:
         subj = 'Triage Hand-Off'
         ev_start = datetime.datetime.combine( date,  datetime.time( hour=8, minute=45 ) )
