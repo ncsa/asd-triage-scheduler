@@ -5,6 +5,7 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
 WORKDIR /srv
 COPY ./r* /srv
+COPY ./lib* /srv
 RUN python -m pip install -r /srv/requirements.txt
 RUN ln -s /home/.netrc /root/.netrc
 

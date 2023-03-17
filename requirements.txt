@@ -1,6 +1,6 @@
 exchangelib
 oauthlib
-python-dateutil
+pandas
 pyyaml
 tzlocal
 git+https://github.com/andylytical/pyexch@v3.3.0
