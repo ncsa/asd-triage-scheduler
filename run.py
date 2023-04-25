@@ -53,7 +53,7 @@ ENVIRONMENT VARIABLES:
         parser.add_argument( '--start', help='Start date (default: today).' )
         parser.add_argument( '--end', help='End date (default: start + 90 days).' )
 
-        # List
+        # List Options
         g_list = parser.add_argument_group( title='List Duty Teams' )
         g_list.add_argument( '-l', '--list_teams', action='store_true',
                 help=(
@@ -61,9 +61,9 @@ ENVIRONMENT VARIABLES:
                     '\nUse one of these indices with --start_at.'
                     ),
             )
-        # Make Triage Schedule
+        # Triage Schedule
         g_triage = parser.add_argument_group(
-                title='Make Triage Schedule',
+                title='Triage Schedule',
                 description=(
                     'For all work days from START to END,'
                     '\ncreate a triage event on the calendar,'
@@ -74,6 +74,9 @@ ENVIRONMENT VARIABLES:
             )
         g_triage.add_argument( '--mktriage', action='store_true',
                 help='Make triage schedule.',
+            )
+        g_triage.add_argument( '--triage_report', action='store_true',
+                help='Report on existing triage events between START and END.',
             )
         g_triage.add_argument( '--start_at',
                 type=int,
@@ -87,10 +90,9 @@ ENVIRONMENT VARIABLES:
         g_triage.add_argument( '--staff_file',
                 help='Override TRIAGE_STAFF_FILE environment variable.',
             )
-
-        # Make Handoff Events
+        # Handoff Events
         g_handoff = parser.add_argument_group(
-                title='Make Handoff Events',
+                title='Handoff Events',
                 description=(
                     'For all work days from START to END,'
                     '\nget existing Triage and Handoff events from the calendar,'
@@ -204,11 +206,13 @@ def get_triage_categories():
     return resources['triage_categories']
 
 
-def get_existing_events( start=None, end=None ):
+def get_existing_events():
     ''' Get existing events between "start" and "end"
         start = datetime.date
         end = datetime.date
     '''
+    start = get_args().start
+    end = get_args().end
     logging.debug( pprint.pformat( [ start, end ] ) )
     px = get_pyexch()
     # ensure end is 11:59:59 PM
@@ -255,13 +259,7 @@ def create_triage_meetings( mtg_data ):
     '''
     # get existing events
     args = get_args()
-    # triage_start_date = min( mtg_data.keys() )
-    # add one work day to end_date for benefit of handoff events
-    # triage_end_date = max( mtg_data.keys() )
-    existing_events = get_existing_events(
-        start = args.start,
-        end = args.end,
-    )
+    existing_events = get_existing_events()
     # try to create events for dates from csv
     for dt, data in mtg_data.items():
         try:
@@ -303,27 +301,49 @@ def create_or_update_triage_event( date, emails, members, existing_event=None ):
             )
 
 
-def create_handoff_meetings():
+def events_by_type( types ):
+    ''' Map of event lists by type.
+        Return: dictionary with keys=DATE and values={ TYPE: event_list }
+        Effectively a filter on existing events.
+    '''
     args = get_args()
-
     # Get all existing TRIAGE & HANDOFF events from Exchange calendar
-    existing_events = get_existing_events(
-        start = args.start,
-        end = args.end,
-        )
-    # For each day there is a TRIAGE event,
-    #   get the required_attendees from both this and the next TRIAGE event
+    existing_events = get_existing_events()
+    # current_events[dt][e.type] = e
+    content = {}
+    for date, sub in existing_events.items():
+        content[date] = {}
+        for typ, val in sub.items():
+            if typ in types:
+                content[date][typ] = val
+    return content
+
+
+def meeting_attendees( event ):
+    ''' Get a list of emails for all meeting attendees from event,
+        where event is a "simple_event" from pyexch
+    '''
     #   Required_attendees=[ Attendee(), ...]
     #     where Attendee( mailbox=Mailbox(), ...)
     #     and where Mailbox( email_address='...', ...)
     #     thus, emails=[ a.mailbox.email_address for a in required_attendees ]
+    return [ a.mailbox.email_address for a in event.raw_event.required_attendees ]
+
+
+def create_handoff_meetings():
+    args = get_args()
+
+    # Get all existing TRIAGE & HANDOFF events from Exchange calendar
+    existing_events = get_existing_events()
+    # For each day there is a TRIAGE event,
+    #   get the required_attendees from both this and the next TRIAGE event
     triage_dates = sorted( existing_events.keys() )
     loop_end = len( triage_dates ) - 1
     for i in range( loop_end ):
         # get members from current triage event
         curr_date = triage_dates[i]
         curr_triage_event = existing_events[ curr_date ][ 'TRIAGE' ]
-        curr_members = [ a.mailbox.email_address for a in curr_triage_event.raw_event.required_attendees ]
+        curr_members = meeting_attendees( curr_triage_event )
         logging.debug( f'{curr_triage_event.start} {curr_triage_event.subject}, {curr_members}' )
         # get members from next triage event
         try:
@@ -333,7 +353,7 @@ def create_handoff_meetings():
             raise
         try:
             next_triage_event = existing_events[ next_date ][ 'TRIAGE' ]
-            next_members = [ a.mailbox.email_address for a in next_triage_event.raw_event.required_attendees ]
+            next_members = meeting_attendees( next_triage_event )
         except KeyError:
             logging.error( f'No event data found after date: "{curr_date}"' )
             raise
@@ -362,7 +382,7 @@ def create_or_update_handoff_event( date, emails, existing_event=None ):
     if existing_event:
         logging.info( f'Found existing HANDOFF event for date "{date}"' )
         #logging.debug( f'Existing Event: {existing_event}' )
-        existing_members = sorted( [ a.mailbox.email_address for a in existing_event.raw_event.required_attendees ] )
+        existing_members = sorted( meeting_attendees( existing_event ) )
         new_members = sorted( emails )
         if existing_members != new_members:
             logging.debug( f'Member mismatch for HANDOFF date "{date}"' )
@@ -434,9 +454,18 @@ def run():
     args = get_args()
 
     if args.list_teams:
-        # pprint.pprint( get_triage_teams() )
         for i,members in enumerate( get_triage_teams() ):
             print( f'{i: >2d} {members}' )
+        return True
+
+    if args.triage_report:
+        events = events_by_type( types=('TRIAGE',) )
+        for date, sub in events.items():
+            print( f'{date}' )
+            for typ, ev in sub.items():
+                print( f'\t{typ}' )
+                members = meeting_attendees( ev )
+                print( f'\t\t{ev.start} {ev.type} {ev.subject} {members}' )
         return True
 
     if args.mktriage:
