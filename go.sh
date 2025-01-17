@@ -62,7 +62,7 @@ function assert_env_vars {
 
 function latest_tag {
   [[ "$DEBUG" -eq 1 ]] && set -x
-  echo refactor
+  echo latest
 }
 
 [[ "$DEBUG" -eq 1 ]] && set -x
